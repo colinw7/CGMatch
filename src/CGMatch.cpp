@@ -97,6 +97,9 @@ main(int argc, char **argv)
     if (! quiet)
       std::cerr << "No match for " << patternsStr << "\n";
 
+    if (count)
+      std::cout << "0\n";
+
     return -1;
   }
 
