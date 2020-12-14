@@ -3,30 +3,50 @@
 #include <vector>
 #include <unistd.h>
 #include <iostream>
+#include <sys/stat.h>
 
 int
 main(int argc, char **argv)
 {
+  enum class SummaryType {
+    NONE,
+    COUNT,
+    NEWEST,
+    OLDEST,
+    LARGEST,
+    SMALLEST,
+  };
+
   using Strs = std::vector<std::string>;
 
-  Strs patterns;
-  bool count       = false;
-  bool mark        = false;
-  bool quiet       = false;
-  Strs execStrs;
-  bool ignore_args = false;
+  Strs        patterns;
+  SummaryType summaryType = SummaryType::NONE;
+  bool        mark        = false;
+  bool        quiet       = false;
+  Strs        execStrs;
+  bool        ignore_args = false;
 
   for (int i = 1; i < argc; ++i) {
     if (! ignore_args && argv[i][0] == '-') {
-      if      (argv[i][1] == '-')
+      std::string arg = &argv[i][1];
+
+      if      (arg == "-")
         ignore_args = true;
-      else if (argv[i][1] == 'c')
-        count = true;
-      else if (argv[i][1] == 'm')
+      else if (arg == "c" || arg == "-count")
+        summaryType = SummaryType::COUNT;
+      else if (arg == "-newest")
+        summaryType = SummaryType::NEWEST;
+      else if (arg == "-oldest")
+        summaryType = SummaryType::OLDEST;
+      else if (arg == "-largest")
+        summaryType = SummaryType::LARGEST;
+      else if (arg == "-smallest")
+        summaryType = SummaryType::SMALLEST;
+      else if (arg == "m")
         mark = true;
-      else if (argv[i][1] == 'q')
+      else if (arg == "q")
         quiet = true;
-      else if (argv[i][1] == 'e') {
+      else if (arg == "e") {
         ++i;
 
         if (i >= argc) {
@@ -38,7 +58,16 @@ main(int argc, char **argv)
           execStrs.push_back(argv[i++]);
       }
       else if (argv[i][1] == 'h') {
-        std::cerr << "CGMatch [-c|-m|-q|-e <command>] <pattern>\n";
+        std::cerr << "CGMatch [-c|--count|--newest|--oldest|--largest|--smallest|"
+                     "-m|-q|-e <command>] <pattern>\n";
+        std::cerr << " -c|--count   : count matching files\n";
+        std::cerr << " -newest      : newest matching file\n";
+        std::cerr << " -oldest      : oldest matching file\n";
+        std::cerr << " -largest     : largest matching file\n";
+        std::cerr << " -smallest    : smallest matching file\n";
+        std::cerr << " -m           : add directory marker (/ at end)\n";
+        std::cerr << " -q           : suppress messages\n";
+        std::cerr << " -e <command> : execute command on each matching file\n";
         return 0;
       }
       else
@@ -48,6 +77,10 @@ main(int argc, char **argv)
       patterns.push_back(argv[i]);
     }
   }
+
+  //---
+
+  // get matching files
 
   glob_t globbuf;
 
@@ -84,6 +117,9 @@ main(int argc, char **argv)
     flags |= GLOB_APPEND;
   }
 
+  //---
+
+  // if no files match then output message
   if (nomatch == int(patterns.size())) {
     std::string patternsStr;
 
@@ -97,14 +133,17 @@ main(int argc, char **argv)
     if (! quiet)
       std::cerr << "No match for " << patternsStr << "\n";
 
-    if (count)
+    if (summaryType == SummaryType::COUNT)
       std::cout << "0\n";
 
     return -1;
   }
 
+  //---
+
   int rc = 0;
 
+  // execute command on each file
   if      (! execStrs.empty()) {
     int i = 0;
 
@@ -113,9 +152,69 @@ main(int argc, char **argv)
 
     rc = execvp(execStrs[0].c_str(), &globbuf.gl_pathv[0]);
   }
-  else if (count) {
+  // display count
+  else if (summaryType == SummaryType::COUNT) {
     std::cout << globbuf.gl_pathc << "\n";
   }
+  else if (summaryType == SummaryType::NEWEST ||
+           summaryType == SummaryType::OLDEST) {
+    if (globbuf.gl_pathc) {
+      std::string bestFile;
+      time_t      time { 0 };
+
+      for (size_t i = 0; i < globbuf.gl_pathc; ++i) {
+        struct stat stat1;
+
+        lstat(globbuf.gl_pathv[i], &stat1);
+
+        auto time1 = stat1.st_mtime;
+
+        bool better = false;
+
+        if (summaryType == SummaryType::NEWEST)
+          better = (i == 0 || time1 > time);
+        else
+          better = (i == 0 || time1 < time);
+
+        if (better) {
+          bestFile = globbuf.gl_pathv[i];
+          time     = time1;
+        }
+      }
+
+      std::cout << bestFile << "\n";
+    }
+  }
+  else if (summaryType == SummaryType::LARGEST ||
+           summaryType == SummaryType::SMALLEST) {
+    if (globbuf.gl_pathc) {
+      std::string bestFile;
+      long        size { 0 };
+
+      for (size_t i = 0; i < globbuf.gl_pathc; ++i) {
+        struct stat stat1;
+
+        lstat(globbuf.gl_pathv[i], &stat1);
+
+        auto size1 = stat1.st_size;
+
+        bool better = false;
+
+        if (summaryType == SummaryType::LARGEST)
+          better = (i == 0 || size1 > size);
+        else
+          better = (i == 0 || size1 < size);
+
+        if (better) {
+          bestFile = globbuf.gl_pathv[i];
+          size     = size1;
+        }
+      }
+
+      std::cout << bestFile << "\n";
+    }
+  }
+  // display files
   else {
     if (globbuf.gl_pathc) {
       for (size_t i = 0; i < globbuf.gl_pathc; ++i) {
