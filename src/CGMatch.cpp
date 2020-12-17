@@ -23,6 +23,7 @@ main(int argc, char **argv)
   SummaryType summaryType = SummaryType::NONE;
   bool        mark        = false;
   bool        quiet       = false;
+  std::string nostr;
   Strs        execStrs;
   bool        ignore_args = false;
 
@@ -46,6 +47,12 @@ main(int argc, char **argv)
         mark = true;
       else if (arg == "q")
         quiet = true;
+      else if (arg == "nostr") {
+        ++i;
+
+        if (i < argc)
+          nostr = argv[i];
+      }
       else if (arg == "e") {
         ++i;
 
@@ -67,6 +74,7 @@ main(int argc, char **argv)
         std::cerr << " -smallest    : smallest matching file\n";
         std::cerr << " -m           : add directory marker (/ at end)\n";
         std::cerr << " -q           : suppress messages\n";
+        std::cerr << " -nostr       : string to return if no match\n";
         std::cerr << " -e <command> : execute command on each matching file\n";
         return 0;
       }
@@ -135,6 +143,8 @@ main(int argc, char **argv)
 
     if (summaryType == SummaryType::COUNT)
       std::cout << "0\n";
+    else if (nostr != "")
+      std::cout << nostr << "\n";
 
     return -1;
   }

@@ -1,2 +1,1 @@
-# CGMatch
-File Glob Match
+doc/README.md
