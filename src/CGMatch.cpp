@@ -24,15 +24,17 @@ main(int argc, char **argv)
   bool        mark        = false;
   bool        quiet       = false;
   std::string nostr;
+  std::string includeTypes;
+  std::string excludeTypes;
   Strs        execStrs;
-  bool        ignore_args = false;
+  bool        ignoreArgs = false;
 
   for (int i = 1; i < argc; ++i) {
-    if (! ignore_args && argv[i][0] == '-') {
+    if (! ignoreArgs && argv[i][0] == '-') {
       std::string arg = &argv[i][1];
 
       if      (arg == "-")
-        ignore_args = true;
+        ignoreArgs = true;
       else if (arg == "c" || arg == "-count")
         summaryType = SummaryType::COUNT;
       else if (arg == "-newest")
@@ -43,6 +45,18 @@ main(int argc, char **argv)
         summaryType = SummaryType::LARGEST;
       else if (arg == "-smallest")
         summaryType = SummaryType::SMALLEST;
+      else if (arg == "i" || arg == "-include") {
+        ++i;
+
+        if (i < argc)
+          includeTypes = argv[i];
+      }
+      else if (arg == "x" || arg == "-exclude") {
+        ++i;
+
+        if (i < argc)
+          excludeTypes = argv[i];
+      }
       else if (arg == "m")
         mark = true;
       else if (arg == "q")
@@ -53,7 +67,7 @@ main(int argc, char **argv)
         if (i < argc)
           nostr = argv[i];
       }
-      else if (arg == "e") {
+      else if (arg == "e" || arg == "-exec") {
         ++i;
 
         if (i >= argc) {
@@ -65,17 +79,21 @@ main(int argc, char **argv)
           execStrs.push_back(argv[i++]);
       }
       else if (argv[i][1] == 'h') {
-        std::cerr << "CGMatch [-c|--count|--newest|--oldest|--largest|--smallest|"
-                     "-m|-q|-e <command>] <pattern>\n";
-        std::cerr << " -c|--count   : count matching files\n";
-        std::cerr << " -newest      : newest matching file\n";
-        std::cerr << " -oldest      : oldest matching file\n";
-        std::cerr << " -largest     : largest matching file\n";
-        std::cerr << " -smallest    : smallest matching file\n";
-        std::cerr << " -m           : add directory marker (/ at end)\n";
-        std::cerr << " -q           : suppress messages\n";
-        std::cerr << " -nostr       : string to return if no match\n";
-        std::cerr << " -e <command> : execute command on each matching file\n";
+        auto &os = std::cerr;
+
+        os << "CGMatch -c|--count --newest|--oldest|--largest|--smallest "
+                       "-i|--include -x|--exclude -m -q -e|--exec <command> <pattern>\n";
+        os << " -c|--count          : count matching files\n";
+        os << " --newest            : newest matching file\n";
+        os << " --oldest            : oldest matching file\n";
+        os << " --largest           : largest matching file\n";
+        os << " --smallest          : smallest matching file\n";
+        os << " -i|--include        : include types\n";
+        os << " -x|--exclude        : exclude types\n";
+        os << " -m                  : add directory marker (/ at end)\n";
+        os << " -q                  : suppress messages\n";
+        os << " -nostr              : string to return if no match\n";
+        os << " -e|--exec <command> : execute command on each matching file\n";
         return 0;
       }
       else
@@ -83,6 +101,42 @@ main(int argc, char **argv)
     }
     else {
       patterns.push_back(argv[i]);
+    }
+  }
+
+  //---
+
+  bool reg_type  = true;
+  bool dir_type  = true;
+  bool link_type = true;
+
+  if (! includeTypes.empty()) {
+    reg_type  = false;
+    dir_type  = false;
+    link_type = false;
+
+    for (int i = 0; i < int(includeTypes.size()); ++i) {
+      if      (includeTypes[i] == 'r')
+        reg_type = true;
+      else if (includeTypes[i] == 'd')
+        dir_type = true;
+      else if (includeTypes[i] == 'l')
+        link_type = true;
+      else
+        std::cerr << "Invalid include type '" << includeTypes[i] << "'\n";
+    }
+  }
+
+  if (! excludeTypes.empty()) {
+    for (int i = 0; i < int(excludeTypes.size()); ++i) {
+      if      (includeTypes[i] == 'r')
+        reg_type = false;
+      else if (excludeTypes[i] == 'd')
+        dir_type = false;
+      else if (excludeTypes[i] == 'l')
+        link_type = false;
+      else
+        std::cerr << "Invalid extlude type '" << excludeTypes[i] << "'\n";
     }
   }
 
@@ -141,7 +195,7 @@ main(int argc, char **argv)
     if (! quiet)
       std::cerr << "No match for " << patternsStr << "\n";
 
-    if (summaryType == SummaryType::COUNT)
+    if      (summaryType == SummaryType::COUNT)
       std::cout << "0\n";
     else if (nostr != "")
       std::cout << nostr << "\n";
@@ -151,31 +205,66 @@ main(int argc, char **argv)
 
   //---
 
+  // filter files
+  std::vector<char *> filenames;
+
+  if (! reg_type || ! dir_type || ! link_type) {
+    for (size_t i = 0; i < globbuf.gl_pathc; ++i) {
+      struct stat stat1;
+
+      stat(globbuf.gl_pathv[i], &stat1);
+
+      if (! link_type && S_ISLNK(stat1.st_mode))
+        continue;
+
+      struct stat stat2;
+
+      lstat(globbuf.gl_pathv[i], &stat2);
+
+      if (! reg_type && S_ISREG(stat2.st_mode))
+        continue;
+
+      if (! dir_type && S_ISDIR(stat2.st_mode))
+        continue;
+
+      filenames.push_back(globbuf.gl_pathv[i]);
+    }
+  }
+  else {
+    for (size_t i = 0; i < globbuf.gl_pathc; ++i)
+      filenames.push_back(globbuf.gl_pathv[i]);
+  }
+
+  //---
+
   int rc = 0;
 
   // execute command on each file
   if      (! execStrs.empty()) {
-    int i = 0;
+    std::vector<char *> args = filenames;
 
     for (const auto &execStr : execStrs)
-      globbuf.gl_pathv[i++] = (char *) execStr.c_str();
+      args.push_back((char *) execStr.c_str());
 
-    rc = execvp(execStrs[0].c_str(), &globbuf.gl_pathv[0]);
+    // <command> <files> <extra_args>
+    rc = execvp(execStrs[0].c_str(), &args[0]);
   }
   // display count
   else if (summaryType == SummaryType::COUNT) {
-    std::cout << globbuf.gl_pathc << "\n";
+    std::cout << filenames.size() << "\n";
+
+    rc = 0; // count ?
   }
-  else if (summaryType == SummaryType::NEWEST ||
-           summaryType == SummaryType::OLDEST) {
-    if (globbuf.gl_pathc) {
+  else if (summaryType == SummaryType::NEWEST || summaryType == SummaryType::OLDEST) {
+    if (! filenames.empty()) {
       std::string bestFile;
       time_t      time { 0 };
+      int         i { 0 };
 
-      for (size_t i = 0; i < globbuf.gl_pathc; ++i) {
+      for (const auto &file : filenames) {
         struct stat stat1;
 
-        lstat(globbuf.gl_pathv[i], &stat1);
+        lstat(file, &stat1);
 
         auto time1 = stat1.st_mtime;
 
@@ -187,24 +276,26 @@ main(int argc, char **argv)
           better = (i == 0 || time1 < time);
 
         if (better) {
-          bestFile = globbuf.gl_pathv[i];
+          bestFile = file;
           time     = time1;
         }
+
+        ++i;
       }
 
       std::cout << bestFile << "\n";
     }
   }
-  else if (summaryType == SummaryType::LARGEST ||
-           summaryType == SummaryType::SMALLEST) {
-    if (globbuf.gl_pathc) {
+  else if (summaryType == SummaryType::LARGEST || summaryType == SummaryType::SMALLEST) {
+    if (! filenames.empty()) {
       std::string bestFile;
       long        size { 0 };
+      int         i { 0 };
 
-      for (size_t i = 0; i < globbuf.gl_pathc; ++i) {
+      for (const auto &file : filenames) {
         struct stat stat1;
 
-        lstat(globbuf.gl_pathv[i], &stat1);
+        lstat(file, &stat1);
 
         auto size1 = stat1.st_size;
 
@@ -216,9 +307,11 @@ main(int argc, char **argv)
           better = (i == 0 || size1 < size);
 
         if (better) {
-          bestFile = globbuf.gl_pathv[i];
+          bestFile = file;
           size     = size1;
         }
+
+        ++i;
       }
 
       std::cout << bestFile << "\n";
@@ -226,17 +319,21 @@ main(int argc, char **argv)
   }
   // display files
   else {
-    if (globbuf.gl_pathc) {
-      for (size_t i = 0; i < globbuf.gl_pathc; ++i) {
+    if (! filenames.empty()) {
+      int i = 0;
+
+      for (const auto &file : filenames) {
         if (i > 0) std::cout << " ";
 
-        std::cout << globbuf.gl_pathv[i];
+        std::cout << file;
+
+        ++i;
       }
 
       std::cout << "\n";
     }
 
-    rc = globbuf.gl_pathc;
+    rc = filenames.size();
   }
 
   globfree(&globbuf);
