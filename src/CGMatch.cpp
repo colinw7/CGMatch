@@ -106,9 +106,9 @@ main(int argc, char **argv)
 
   //---
 
-  bool reg_type  = true;
-  bool dir_type  = true;
-  bool link_type = true;
+  bool reg_type  = true; bool reg_specified  = false;
+  bool dir_type  = true; bool dir_specified  = false;
+  bool link_type = true; bool link_specified = false;
 
   if (! includeTypes.empty()) {
     reg_type  = false;
@@ -116,12 +116,18 @@ main(int argc, char **argv)
     link_type = false;
 
     for (int i = 0; i < int(includeTypes.size()); ++i) {
-      if      (includeTypes[i] == 'r')
-        reg_type = true;
-      else if (includeTypes[i] == 'd')
-        dir_type = true;
-      else if (includeTypes[i] == 'l')
-        link_type = true;
+      if      (includeTypes[i] == 'r') {
+        reg_type      = true;
+        reg_specified = true;
+      }
+      else if (includeTypes[i] == 'd') {
+        dir_type      = true;
+        dir_specified = true;
+      }
+      else if (includeTypes[i] == 'l') {
+        link_type      = true;
+        link_specified = true;
+      }
       else
         std::cerr << "Invalid include type '" << includeTypes[i] << "'\n";
     }
@@ -129,14 +135,20 @@ main(int argc, char **argv)
 
   if (! excludeTypes.empty()) {
     for (int i = 0; i < int(excludeTypes.size()); ++i) {
-      if      (includeTypes[i] == 'r')
-        reg_type = false;
-      else if (excludeTypes[i] == 'd')
-        dir_type = false;
-      else if (excludeTypes[i] == 'l')
-        link_type = false;
+      if      (excludeTypes[i] == 'r') {
+        reg_type      = false;
+        reg_specified = true;
+      }
+      else if (excludeTypes[i] == 'd') {
+        dir_type      = false;
+        dir_specified = true;
+      }
+      else if (excludeTypes[i] == 'l') {
+        link_type      = false;
+        link_specified = true;
+      }
       else
-        std::cerr << "Invalid extlude type '" << excludeTypes[i] << "'\n";
+        std::cerr << "Invalid exclude type '" << excludeTypes[i] << "'\n";
     }
   }
 
@@ -208,26 +220,40 @@ main(int argc, char **argv)
   // filter files
   std::vector<char *> filenames;
 
-  if (! reg_type || ! dir_type || ! link_type) {
+  if (reg_specified || dir_specified || link_specified) {
     for (size_t i = 0; i < globbuf.gl_pathc; ++i) {
-      struct stat stat1;
+      if (link_specified) {
+        struct stat stat1;
 
-      stat(globbuf.gl_pathv[i], &stat1);
+        lstat(globbuf.gl_pathv[i], &stat1);
 
-      if (! link_type && S_ISLNK(stat1.st_mode))
-        continue;
+        if (S_ISLNK(stat1.st_mode)) {
+          if (link_type)
+            filenames.push_back(globbuf.gl_pathv[i]);
+
+          continue;
+        }
+      }
 
       struct stat stat2;
 
-      lstat(globbuf.gl_pathv[i], &stat2);
+      stat (globbuf.gl_pathv[i], &stat2);
 
-      if (! reg_type && S_ISREG(stat2.st_mode))
+      if (dir_specified) {
+        if (S_ISDIR(stat2.st_mode)) {
+          if (dir_type)
+            filenames.push_back(globbuf.gl_pathv[i]);
+
+          continue;
+        }
+      }
+
+      if (S_ISREG(stat2.st_mode)) {
+        if (reg_type)
+          filenames.push_back(globbuf.gl_pathv[i]);
+
         continue;
-
-      if (! dir_type && S_ISDIR(stat2.st_mode))
-        continue;
-
-      filenames.push_back(globbuf.gl_pathv[i]);
+      }
     }
   }
   else {
