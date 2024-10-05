@@ -270,7 +270,7 @@ main(int argc, char **argv)
     std::vector<char *> args = filenames;
 
     for (const auto &execStr : execStrs)
-      args.push_back((char *) execStr.c_str());
+      args.push_back(const_cast<char *>(execStr.c_str()));
 
     // <command> <files> <extra_args>
     rc = execvp(execStrs[0].c_str(), &args[0]);
@@ -359,7 +359,7 @@ main(int argc, char **argv)
       std::cout << "\n";
     }
 
-    rc = filenames.size();
+    rc = int(filenames.size());
   }
 
   globfree(&globbuf);
